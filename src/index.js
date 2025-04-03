@@ -13,7 +13,7 @@ dotenv.config()
 const app = express()
 const server = createServer(app)
 
-// Socket.io setup
+// Socket.io setup with optimized configuration
 const io = new Server(server, {
   cors: {
     origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
@@ -33,6 +33,14 @@ const io = new Server(server, {
     sameSite: "none",
     secure: true,
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  },
+  connectTimeout: 45000,
+  maxHttpBufferSize: 1e8,
+  cors: {
+    origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
+    credentials: true,
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   }
 })
 
@@ -52,7 +60,7 @@ app.use(cors({
 app.use("/api/auth", authRoutes)
 app.use("/api/messages", messageRoutes)
 
-// Socket.io connection handling
+// Socket.io connection handling with improved error handling and logging
 const userSocketMap = new Map()
 
 io.on("connection", (socket) => {
@@ -63,63 +71,92 @@ io.on("connection", (socket) => {
   });
 
   socket.on("setup", (userData) => {
-    console.log("Socket setup received:", { userData });
-    if (userData?._id) {
-      // Store user socket mapping
-      userSocketMap.set(userData._id, socket.id);
-      socket.userId = userData._id; // Store userId in socket object
-      console.log("User socket mapping updated:", {
-        userId: userData._id,
-        socketId: socket.id,
-        totalConnections: userSocketMap.size
-      });
-      io.emit("online-users", Array.from(userSocketMap.keys()));
+    try {
+      console.log("Socket setup received:", { userData });
+      if (userData?._id) {
+        // Store user socket mapping
+        userSocketMap.set(userData._id, socket.id);
+        socket.userId = userData._id; // Store userId in socket object
+        console.log("User socket mapping updated:", {
+          userId: userData._id,
+          socketId: socket.id,
+          totalConnections: userSocketMap.size
+        });
+        io.emit("online-users", Array.from(userSocketMap.keys()));
+      }
+    } catch (error) {
+      console.error("Error in socket setup:", error);
+      socket.emit("error", { message: "Failed to setup socket connection" });
     }
   });
 
   socket.on("send-message", async (message) => {
-    console.log("Received send-message event:", {
-      message,
-      receiverId: message.receiverId,
-      senderId: message.senderId
-    });
-    
-    const receiverSocketId = userSocketMap.get(message.receiverId);
-    console.log("Receiver socket lookup:", {
-      receiverId: message.receiverId,
-      foundSocketId: receiverSocketId
-    });
-    
-    if (receiverSocketId) {
-      // Send to specific user
-      io.to(receiverSocketId).emit("message-received", message);
-      console.log("Message forwarded to receiver");
-    } else {
-      console.log("Receiver not found in socket map");
+    try {
+      console.log("Received send-message event:", {
+        message,
+        receiverId: message.receiverId,
+        senderId: message.senderId
+      });
+      
+      const receiverSocketId = userSocketMap.get(message.receiverId);
+      console.log("Receiver socket lookup:", {
+        receiverId: message.receiverId,
+        foundSocketId: receiverSocketId
+      });
+      
+      if (receiverSocketId) {
+        // Send to specific user
+        io.to(receiverSocketId).emit("message-received", message);
+        console.log("Message forwarded to receiver");
+      } else {
+        console.log("Receiver not found in socket map");
+        // Emit back to sender that receiver is offline
+        socket.emit("message-status", {
+          messageId: message._id,
+          status: "offline",
+          receiverId: message.receiverId
+        });
+      }
+    } catch (error) {
+      console.error("Error in send-message handler:", error);
+      socket.emit("error", { message: "Failed to send message" });
     }
   });
 
   socket.on("typing", ({ receiverId, isTyping }) => {
-    const receiverSocketId = userSocketMap.get(receiverId)
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("typing-status", {
-        userId: socket.userId,
-        isTyping
-      })
+    try {
+      const receiverSocketId = userSocketMap.get(receiverId)
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("typing-status", {
+          userId: socket.userId,
+          isTyping
+        })
+      }
+    } catch (error) {
+      console.error("Error in typing handler:", error);
     }
   })
 
   socket.on("disconnect", () => {
-    console.log("Client disconnected:", {
-      socketId: socket.id,
-      userId: socket.userId
-    });
-    if (socket.userId) {
-      userSocketMap.delete(socket.userId);
-      io.emit("online-users", Array.from(userSocketMap.keys()));
-      console.log("User removed from socket map");
+    try {
+      console.log("Client disconnected:", {
+        socketId: socket.id,
+        userId: socket.userId
+      });
+      if (socket.userId) {
+        userSocketMap.delete(socket.userId);
+        io.emit("online-users", Array.from(userSocketMap.keys()));
+        console.log("User removed from socket map");
+      }
+    } catch (error) {
+      console.error("Error in disconnect handler:", error);
     }
   })
+
+  socket.on("error", (error) => {
+    console.error("Socket error:", error);
+    socket.emit("error", { message: "An error occurred" });
+  });
 })
 
 const PORT = process.env.PORT || 5001

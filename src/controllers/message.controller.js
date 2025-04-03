@@ -10,10 +10,10 @@ export const getUsersForSidebar = async (req, res) => {
     
     const filteredUsers = await User.find({
       _id: { $ne: loggedInUserId }
-    }).select("-password");
+    })
+    .select("-password")
+    .lean(); // Use lean() for better performance when we don't need Mongoose documents
 
-    console.log("Filtered users:", filteredUsers); // Debug log
-    
     res.status(200).json({ filteredUsers });
   } catch (error) {
     console.error("Error in getUsersForSidebar:", error);
@@ -34,7 +34,8 @@ export const getMessages = async (req, res) => {
     })
       .sort({ createdAt: 1 })
       .populate('senderId', 'fullName profilePic')
-      .populate('receiverId', 'fullName profilePic');
+      .populate('receiverId', 'fullName profilePic')
+      .lean(); // Use lean() for better performance
 
     res.status(200).json(messages);
   } catch (error) {
@@ -45,35 +46,22 @@ export const getMessages = async (req, res) => {
 
 export const sendMessage = async (req, res) => {
   try {
-    console.log("Received message request:", {
-      body: req.body,
-      params: req.params,
-      user: req.user
-    });
-
     const { text, image } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
 
     if (!receiverId) {
-      console.log("Missing receiver ID");
       return res.status(400).json({ message: "Receiver ID is required" });
     }
 
     let imageUrl;
     if (image) {
-      console.log("Uploading image to Cloudinary");
-      const uploadedResponse = await cloudinary.uploader.upload(image);
+      const uploadedResponse = await cloudinary.uploader.upload(image, {
+        folder: 'chat_images',
+        resource_type: 'auto'
+      });
       imageUrl = uploadedResponse.secure_url;
-      console.log("Image uploaded successfully:", imageUrl);
     }
-
-    console.log("Creating new message:", {
-      text,
-      image: imageUrl,
-      senderId,
-      receiverId
-    });
 
     const newMessage = new Message({
       text,
@@ -83,20 +71,15 @@ export const sendMessage = async (req, res) => {
     });
 
     await newMessage.save();
-    console.log("Message saved successfully:", newMessage._id);
 
     const populatedMessage = await Message.findById(newMessage._id)
       .populate('senderId', 'fullName profilePic')
-      .populate('receiverId', 'fullName profilePic');
+      .populate('receiverId', 'fullName profilePic')
+      .lean(); // Use lean() for better performance
 
-    console.log("Sending response with populated message");
     res.status(201).json(populatedMessage);
   } catch (error) {
-    console.error("Error in sendMessage:", {
-      error: error.message,
-      stack: error.stack,
-      name: error.name
-    });
+    console.error("Error in sendMessage:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 };   
@@ -106,12 +89,10 @@ export const getLastMessages = async (req, res) => {
     const userId = req.user._id;
     
     // Get all users except current user
-    const users = await User.find({ _id: { $ne: userId } });
+    const users = await User.find({ _id: { $ne: userId } }).lean();
     
-    // Get last message for each user
-    const lastMessages = {};
-    
-    for (const user of users) {
+    // Get last message for each user in parallel
+    const lastMessagesPromises = users.map(async (user) => {
       const message = await Message.findOne({
         $or: [
           { senderId: userId, receiverId: user._id },
@@ -120,12 +101,19 @@ export const getLastMessages = async (req, res) => {
       })
       .sort({ createdAt: -1 })
       .populate('senderId', 'fullName profilePic')
-      .populate('receiverId', 'fullName profilePic');
-      
+      .populate('receiverId', 'fullName profilePic')
+      .lean();
+
       if (message) {
-        lastMessages[user._id] = message;
+        return [user._id, message];
       }
-    }
+      return null;
+    });
+
+    const results = await Promise.all(lastMessagesPromises);
+    const lastMessages = Object.fromEntries(
+      results.filter(Boolean)
+    );
     
     res.json(lastMessages);
   } catch (error) {
