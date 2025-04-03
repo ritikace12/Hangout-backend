@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser"
 import cors from "cors"
 import { Server } from "socket.io"
 import { createServer } from "http"
+import fileUpload from 'express-fileupload'
 
 import authRoutes from "./routes/auth.route.js"
 import messageRoutes from "./routes/message.route.js"
@@ -35,25 +36,21 @@ const io = new Server(server, {
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   },
   connectTimeout: 45000,
-  maxHttpBufferSize: 1e8,
-  cors: {
-    origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
-    credentials: true,
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"]
-  }
+  maxHttpBufferSize: 1e8
 })
 
 // Middlewares
 app.use(express.json({ limit: "50mb" }))
+app.use(express.urlencoded({ extended: true, limit: "50mb" }))
 app.use(cookieParser())
 app.use(cors({
   origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  exposedHeaders: ["Set-Cookie"],
-  maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  credentials: true
+}))
+app.use(fileUpload({
+  useTempFiles: true,
+  tempFileDir: '/tmp/',
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB max file size
 }))
 
 // Routes
@@ -74,9 +71,8 @@ io.on("connection", (socket) => {
     try {
       console.log("Socket setup received:", { userData });
       if (userData?._id) {
-        // Store user socket mapping
         userSocketMap.set(userData._id, socket.id);
-        socket.userId = userData._id; // Store userId in socket object
+        socket.userId = userData._id;
         console.log("User socket mapping updated:", {
           userId: userData._id,
           socketId: socket.id,
@@ -105,12 +101,10 @@ io.on("connection", (socket) => {
       });
       
       if (receiverSocketId) {
-        // Send to specific user
         io.to(receiverSocketId).emit("message-received", message);
         console.log("Message forwarded to receiver");
       } else {
         console.log("Receiver not found in socket map");
-        // Emit back to sender that receiver is offline
         socket.emit("message-status", {
           messageId: message._id,
           status: "offline",

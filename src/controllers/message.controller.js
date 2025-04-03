@@ -46,9 +46,10 @@ export const getMessages = async (req, res) => {
 
 export const sendMessage = async (req, res) => {
   try {
-    const { text, image } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
+    const text = req.body.message;
+    const image = req.files?.image;
 
     if (!receiverId) {
       return res.status(400).json({ message: "Receiver ID is required" });
@@ -56,7 +57,12 @@ export const sendMessage = async (req, res) => {
 
     let imageUrl;
     if (image) {
-      const uploadedResponse = await cloudinary.uploader.upload(image, {
+      // Convert buffer to base64 for cloudinary
+      const imageBuffer = image.data;
+      const base64Image = imageBuffer.toString('base64');
+      const dataURI = `data:${image.mimetype};base64,${base64Image}`;
+
+      const uploadedResponse = await cloudinary.uploader.upload(dataURI, {
         folder: 'chat_images',
         resource_type: 'auto'
       });
