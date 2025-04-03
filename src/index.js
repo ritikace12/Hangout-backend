@@ -23,7 +23,17 @@ const io = new Server(server, {
   },
   pingTimeout: 60000,
   pingInterval: 25000,
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  path: '/socket.io/',
+  allowEIO3: true,
+  allowUpgrades: true,
+  cookie: {
+    name: "io",
+    httpOnly: true,
+    sameSite: "none",
+    secure: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
 })
 
 // Middlewares
@@ -33,7 +43,9 @@ app.use(cors({
   origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: ["Set-Cookie"],
+  maxAge: 24 * 60 * 60 * 1000 // 24 hours
 }))
 
 // Routes
@@ -44,25 +56,48 @@ app.use("/api/messages", messageRoutes)
 const userSocketMap = new Map()
 
 io.on("connection", (socket) => {
-  console.log("New client connected:", socket.id)
+  console.log("New client connected:", {
+    socketId: socket.id,
+    handshake: socket.handshake,
+    headers: socket.handshake.headers
+  });
 
   socket.on("setup", (userData) => {
+    console.log("Socket setup received:", { userData });
     if (userData?._id) {
       // Store user socket mapping
-      userSocketMap.set(userData._id, socket.id)
-      socket.userId = userData._id // Store userId in socket object
-      io.emit("online-users", Array.from(userSocketMap.keys()))
+      userSocketMap.set(userData._id, socket.id);
+      socket.userId = userData._id; // Store userId in socket object
+      console.log("User socket mapping updated:", {
+        userId: userData._id,
+        socketId: socket.id,
+        totalConnections: userSocketMap.size
+      });
+      io.emit("online-users", Array.from(userSocketMap.keys()));
     }
-  })
+  });
 
   socket.on("send-message", async (message) => {
-    const receiverSocketId = userSocketMap.get(message.receiverId)
+    console.log("Received send-message event:", {
+      message,
+      receiverId: message.receiverId,
+      senderId: message.senderId
+    });
+    
+    const receiverSocketId = userSocketMap.get(message.receiverId);
+    console.log("Receiver socket lookup:", {
+      receiverId: message.receiverId,
+      foundSocketId: receiverSocketId
+    });
     
     if (receiverSocketId) {
       // Send to specific user
-      io.to(receiverSocketId).emit("message-received", message)
+      io.to(receiverSocketId).emit("message-received", message);
+      console.log("Message forwarded to receiver");
+    } else {
+      console.log("Receiver not found in socket map");
     }
-  })
+  });
 
   socket.on("typing", ({ receiverId, isTyping }) => {
     const receiverSocketId = userSocketMap.get(receiverId)
@@ -75,9 +110,14 @@ io.on("connection", (socket) => {
   })
 
   socket.on("disconnect", () => {
+    console.log("Client disconnected:", {
+      socketId: socket.id,
+      userId: socket.userId
+    });
     if (socket.userId) {
-      userSocketMap.delete(socket.userId)
-      io.emit("online-users", Array.from(userSocketMap.keys()))
+      userSocketMap.delete(socket.userId);
+      io.emit("online-users", Array.from(userSocketMap.keys()));
+      console.log("User removed from socket map");
     }
   })
 })

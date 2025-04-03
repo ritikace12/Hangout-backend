@@ -45,19 +45,35 @@ export const getMessages = async (req, res) => {
 
 export const sendMessage = async (req, res) => {
   try {
+    console.log("Received message request:", {
+      body: req.body,
+      params: req.params,
+      user: req.user
+    });
+
     const { text, image } = req.body;
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
 
     if (!receiverId) {
+      console.log("Missing receiver ID");
       return res.status(400).json({ message: "Receiver ID is required" });
     }
 
     let imageUrl;
     if (image) {
+      console.log("Uploading image to Cloudinary");
       const uploadedResponse = await cloudinary.uploader.upload(image);
       imageUrl = uploadedResponse.secure_url;
+      console.log("Image uploaded successfully:", imageUrl);
     }
+
+    console.log("Creating new message:", {
+      text,
+      image: imageUrl,
+      senderId,
+      receiverId
+    });
 
     const newMessage = new Message({
       text,
@@ -67,14 +83,20 @@ export const sendMessage = async (req, res) => {
     });
 
     await newMessage.save();
+    console.log("Message saved successfully:", newMessage._id);
 
     const populatedMessage = await Message.findById(newMessage._id)
       .populate('senderId', 'fullName profilePic')
       .populate('receiverId', 'fullName profilePic');
 
+    console.log("Sending response with populated message");
     res.status(201).json(populatedMessage);
   } catch (error) {
-    console.error("Error in sendMessage:", error);
+    console.error("Error in sendMessage:", {
+      error: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     res.status(500).json({ message: "Internal server error" });
   }
 };   
