@@ -18,8 +18,12 @@ const io = new Server(server, {
   cors: {
     origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
     credentials: true,
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"]
   },
   pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling']
 })
 
 // Middlewares
@@ -28,6 +32,8 @@ app.use(cookieParser())
 app.use(cors({
   origin: ["http://localhost:5173", "https://hangout-12.netlify.app"],
   credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }))
 
 // Routes
