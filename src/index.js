@@ -5,6 +5,7 @@ import cors from "cors"
 import { Server } from "socket.io"
 import { createServer } from "http"
 import fileUpload from 'express-fileupload'
+import Message from "./models/message.model.js"
 
 import authRoutes from "./routes/auth.route.js"
 import messageRoutes from "./routes/message.route.js"
@@ -59,6 +60,7 @@ app.use("/api/messages", messageRoutes)
 
 // Socket.io connection handling with improved error handling and logging
 const userSocketMap = new Map()
+const messageQueue = new Map() // Store offline messages
 
 io.on("connection", (socket) => {
   console.log("New client connected:", {
@@ -67,12 +69,23 @@ io.on("connection", (socket) => {
     headers: socket.handshake.headers
   });
 
-  socket.on("setup", (userData) => {
+  socket.on("setup", async (userData) => {
     try {
       console.log("Socket setup received:", { userData });
       if (userData?._id) {
         userSocketMap.set(userData._id, socket.id);
         socket.userId = userData._id;
+        
+        // Check for queued messages
+        const queuedMessages = messageQueue.get(userData._id) || [];
+        if (queuedMessages.length > 0) {
+          // Send all queued messages
+          queuedMessages.forEach(msg => {
+            socket.emit("message-received", msg);
+          });
+          messageQueue.delete(userData._id);
+        }
+
         console.log("User socket mapping updated:", {
           userId: userData._id,
           socketId: socket.id,
@@ -100,20 +113,66 @@ io.on("connection", (socket) => {
         foundSocketId: receiverSocketId
       });
       
+      // Always emit to sender to show message immediately
+      socket.emit("message-sent", message);
+      
       if (receiverSocketId) {
         io.to(receiverSocketId).emit("message-received", message);
         console.log("Message forwarded to receiver");
-      } else {
-        console.log("Receiver not found in socket map");
+        
+        // Update message status to delivered
+        await Message.findByIdAndUpdate(message._id, {
+          status: "delivered",
+          deliveredAt: new Date()
+        });
+        
+        // Notify sender about delivery
         socket.emit("message-status", {
           messageId: message._id,
-          status: "offline",
+          status: "delivered"
+        });
+      } else {
+        console.log("Receiver not found in socket map");
+        // Queue message for offline user
+        const queuedMessages = messageQueue.get(message.receiverId) || [];
+        queuedMessages.push(message);
+        messageQueue.set(message.receiverId, queuedMessages);
+        
+        // Update message status to queued
+        await Message.findByIdAndUpdate(message._id, {
+          status: "queued"
+        });
+
+        // Notify sender about offline status
+        socket.emit("message-status", {
+          messageId: message._id,
+          status: "queued",
           receiverId: message.receiverId
         });
       }
     } catch (error) {
       console.error("Error in send-message handler:", error);
       socket.emit("error", { message: "Failed to send message" });
+    }
+  });
+
+  socket.on("message-read", async ({ messageId, receiverId }) => {
+    try {
+      // Update message status to read
+      await Message.findByIdAndUpdate(messageId, {
+        status: "read"
+      });
+
+      // Notify sender that message was read
+      const senderSocketId = userSocketMap.get(receiverId);
+      if (senderSocketId) {
+        io.to(senderSocketId).emit("message-status", {
+          messageId,
+          status: "read"
+        });
+      }
+    } catch (error) {
+      console.error("Error in message-read handler:", error);
     }
   });
 
