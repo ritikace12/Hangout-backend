@@ -35,13 +35,15 @@ try {
   });
 
 if(newUser) {
-  generateToken(res, newUser._id);
+  // Generate token and set cookie
+  const token = generateToken(res, newUser._id);
   await newUser.save();
   res.status(201).json({
     _id: newUser._id,
     fullName: newUser.fullName,
     email: newUser.email,
     profilePic: newUser.profilePic,
+    token // Include token in response
   });
 } else {
   res.status(400).json({ message: "Invalid user data" });
@@ -67,15 +69,16 @@ export const login = async (req, res) => {
     }
 
     // Generate token and set cookie
-    generateToken(res, user._id);
+    const token = generateToken(res, user._id);
 
-    // Send user data without password
+    // Send user data without password and include token
     res.status(200).json({
       _id: user._id,
       fullName: user.fullName,
       email: user.email,
       profilePic: user.profilePic,
-      createdAt: user.createdAt
+      createdAt: user.createdAt,
+      token // Include token in response
     });
   } catch (error) {
     console.error("Error in login controller:", error);
