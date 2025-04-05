@@ -73,7 +73,11 @@ io.on("connection", (socket) => {
     try {
       console.log("Socket setup received:", { userData });
       if (userData?._id) {
-        userSocketMap.set(userData._id, socket.id);
+        // Store both userId and socketId for better tracking
+        userSocketMap.set(userData._id, {
+          socketId: socket.id,
+          lastSeen: new Date()
+        });
         socket.userId = userData._id;
         
         // Check for queued messages
@@ -86,12 +90,16 @@ io.on("connection", (socket) => {
           messageQueue.delete(userData._id);
         }
 
+        // Broadcast updated online users list
+        const onlineUsers = Array.from(userSocketMap.keys());
+        io.emit("online-users", onlineUsers);
+        
         console.log("User socket mapping updated:", {
           userId: userData._id,
           socketId: socket.id,
-          totalConnections: userSocketMap.size
+          totalConnections: userSocketMap.size,
+          onlineUsers
         });
-        io.emit("online-users", Array.from(userSocketMap.keys()));
       }
     } catch (error) {
       console.error("Error in socket setup:", error);
@@ -107,17 +115,17 @@ io.on("connection", (socket) => {
         senderId: message.senderId
       });
       
-      const receiverSocketId = userSocketMap.get(message.receiverId);
+      const receiverSocket = userSocketMap.get(message.receiverId);
       console.log("Receiver socket lookup:", {
         receiverId: message.receiverId,
-        foundSocketId: receiverSocketId
+        foundSocket: receiverSocket
       });
       
       // Always emit to sender to show message immediately
       socket.emit("message-sent", message);
       
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit("message-received", message);
+      if (receiverSocket) {
+        io.to(receiverSocket.socketId).emit("message-received", message);
         console.log("Message forwarded to receiver");
         
         // Update message status to delivered
@@ -166,7 +174,7 @@ io.on("connection", (socket) => {
       // Notify sender that message was read
       const senderSocketId = userSocketMap.get(receiverId);
       if (senderSocketId) {
-        io.to(senderSocketId).emit("message-status", {
+        io.to(senderSocketId.socketId).emit("message-status", {
           messageId,
           status: "read"
         });
@@ -180,7 +188,7 @@ io.on("connection", (socket) => {
     try {
       const receiverSocketId = userSocketMap.get(receiverId)
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit("typing-status", {
+        io.to(receiverSocketId.socketId).emit("typing-status", {
           userId: socket.userId,
           isTyping
         })
@@ -198,13 +206,26 @@ io.on("connection", (socket) => {
       });
       if (socket.userId) {
         userSocketMap.delete(socket.userId);
-        io.emit("online-users", Array.from(userSocketMap.keys()));
-        console.log("User removed from socket map");
+        // Broadcast updated online users list
+        const onlineUsers = Array.from(userSocketMap.keys());
+        io.emit("online-users", onlineUsers);
+        console.log("User removed from socket map, online users:", onlineUsers);
       }
     } catch (error) {
       console.error("Error in disconnect handler:", error);
     }
   })
+
+  // Keep track of user's last seen
+  setInterval(() => {
+    if (socket.userId) {
+      const userSocket = userSocketMap.get(socket.userId);
+      if (userSocket) {
+        userSocket.lastSeen = new Date();
+        userSocketMap.set(socket.userId, userSocket);
+      }
+    }
+  }, 30000); // Update every 30 seconds
 
   socket.on("error", (error) => {
     console.error("Socket error:", error);
